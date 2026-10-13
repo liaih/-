@@ -22,6 +22,8 @@ K = dict(
     hdr_slope=0.3,     # 壓縮後 log 斜率（越小壓越多）
     hdr_cap=0.2,       # 底層超出 knee 後最多保留幾 EV
     clip_max=0.03,     # 自動曝光：室內過曝像素比例上限（LR 成品約 2.5%）
+    shoulder=0.85,     # 高光肩部起點（輸出亮度）
+    white_max=0.97,    # 高光肩部上限：最亮處趨近此值，不硬切成純白
     clip_src_max=0.02, # 來源剪裁比例超過此值時，自動曝光不提亮
     wb_auto=0.5,       # 自動白平衡強度：0＝相機白平衡，1＝白牆完全中性（保留部分暖光氛圍）
 )
@@ -143,6 +145,11 @@ def apply_style(R: np.ndarray, p: dict, ev: float = 0.0, k: dict = K, clipped=No
     t = np.clip(T, 0, 1)
     T = np.where(T <= 1, t - k["contrast"] * c * np.sin(2 * np.pi * t) / (2 * np.pi), T)
     g = g * (T / np.maximum(Y, 1e-5))[..., None]
+    # 高光肩部：亮度超過 shoulder 後平滑趨近 white_max，白櫃、白牆、天花保留邊緣與漸層，不變成一片死白
+    Yg = luma(g)
+    s0, wm = k["shoulder"], k["white_max"]
+    Ys = np.where(Yg > s0, s0 + (wm - s0) * np.tanh((Yg - s0) / (wm - s0)), Yg)
+    g = g * (Ys / np.maximum(Yg, 1e-5))[..., None]
     g = np.clip(g, 0, 1).astype(np.float32)
     # 色彩：HSV 空間
     hsv = cv2.cvtColor(g, cv2.COLOR_RGB2HSV)
