@@ -16,6 +16,7 @@ K = dict(
     highlights=1.5,    # 亮部 -100 時亮部壓暗 EV
     base_radius=0.04,  # 底層平滑半徑（佔短邊比例）
     whites=0.35, blacks=0.9, contrast=0.6,
+    base_gamma=1.0,    # 中間調 gamma（<1 提亮中間調），以成品校準
     vibrance=1.0, saturation=1.0, hsl_sat=1.0, hsl_lum=0.35, hsl_hue=30.0,
     hdr_knee=1.0,      # 底層亮度超過「室內第 90 百分位 × 此倍數」才壓縮（窗外等 HDR 亮部）
     hdr_slope=0.3,     # 壓縮後 log 斜率（越小壓越多）
@@ -121,6 +122,8 @@ def apply_style(R: np.ndarray, p: dict, ev: float = 0.0, k: dict = K) -> np.ndar
     Y = luma(g)
     Yc = np.clip(Y, 0, None)
     w, b, c = p.get("Whites2012", 0) / 100, p.get("Blacks2012", 0) / 100, p.get("Contrast2012", 0) / 100
+    # 基礎影調（對應 LR 相機描述檔的底曲線）：中間調 gamma，端點不動
+    Yc = np.where(Yc < 1, np.clip(Yc, 0, 1) ** k["base_gamma"], Yc)
     T = Yc * (1 + k["whites"] * w * np.clip(Yc, 0, 1.2) ** 3)
     T = T * (1 + k["blacks"] * b * (1 - np.clip(T, 0, 1)) ** 4)
     t = np.clip(T, 0, 1)

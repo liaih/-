@@ -1,16 +1,16 @@
 {
  "K": {
   "wb_auto": 1.0,
-  "temp": 0.0111,
-  "tint": 0.0061,
-  "shadows": 2.7207,
-  "highlights": 2.1611,
+  "temp": 0.0118,
+  "tint": 0.0064,
+  "shadows": 2.8889,
+  "highlights": 2.2828,
   "blacks": 0.0,
   "whites": 0.0,
-  "contrast": 1.5,
-  "vibrance": 0.4232,
-  "saturation": 1.3756,
-  "hsl_sat": 1.5833,
+  "contrast": 3.0,
+  "vibrance": 0.4486,
+  "saturation": 1.0807,
+  "hsl_sat": 1.5108,
   "hdr_knee": 1.0,
   "hdr_cap": 0.2,
   "clip_max": 0.03
@@ -18,6 +18,6 @@
  "finished": [
   "ref_2-4.jpg"
  ],
- "loss_before": 3.158,
- "loss_after": 2.591
+ "loss_before": 2.614,
+ "loss_after": 2.55
 }

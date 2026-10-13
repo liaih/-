@@ -15,7 +15,7 @@ from .xmp import parse_xmp
 
 # 要擬合的常數與合理範圍
 FIT = {"wb_auto": (0.0, 1.0), "temp": (0.0, 0.05), "tint": (0.0, 0.05), "shadows": (0.2, 3.0), "highlights": (0.2, 3.0),
-       "blacks": (0.0, 2.0), "whites": (0.0, 1.5), "contrast": (0.0, 3.0),
+       "blacks": (0.0, 2.0), "whites": (0.0, 1.5), "contrast": (0.0, 3.0), "base_gamma": (0.5, 1.5),
        "vibrance": (0.0, 3.0), "saturation": (0.0, 3.0), "hsl_sat": (0.0, 2.0)}
 # 註：HDR 亮部壓縮常數（hdr_*）不擬合：參考成品若無窗景，這些常數無約束，會被擬合到任意值
 STYLE_K_FILE = PRESETS / "style_k.json"
