@@ -8,7 +8,8 @@ import numpy as np
 import cv2
 from .imageio import list_images, load_image, resize_max, luma
 from .grouping import group_by_angle
-from .pipeline import analyze_group, PRESETS
+from .pipeline import analyze_group, source_clipped, PRESETS
+from .merge import srgb_curve
 from .merge import hdr_merge
 from .style import K, apply_style, auto_exposure, exposure_metric
 from .xmp import parse_xmp
@@ -73,21 +74,29 @@ def _nelder_mead(f, x0, step, iters=300, tol=1e-5):
 
 
 def _prepare(bracket_dir, finished_jpg, p, k0, width, log):
-    """單一參考對：HDR（縮圖）、對位後的成品 Lab、有效遮罩、初始 ev。"""
+    """單一參考對（與實際執行相同的流程）：HDR 或單張、來源剪裁權重、對位後成品 Lab、有效遮罩、目標亮度。"""
     paths = list_images(bracket_dir)
     thumbs = [load_image(q, 1024) for q in paths]
     groups, _ = group_by_angle(thumbs)
     idx = max(groups, key=len)
-    A = analyze_group([thumbs[i] for i in idx])
-    st = A["states"]
-    R, _ = hdr_merge(((i, A["vs"][i]) for i in st.members[st.ambient]), A["cal"].curves, A["cal"].ev)
+    if len(idx) == 1:
+        vs, curves, evs, amb = [thumbs[idx[0]]], [srgb_curve()], [0.0], [0]
+    else:
+        A = analyze_group([thumbs[i] for i in idx])
+        st = A["states"]
+        vs, curves, evs, amb = A["vs"], A["cal"].curves, A["cal"].ev, st.members[st.ambient]
+    frames = lambda mem: ((i, vs[i]) for i in mem)
+    R, _ = hdr_merge(frames(amb), curves, evs)
+    clip = source_clipped(frames, amb, evs)
     ref = load_image(finished_jpg, 1024)
-    ev0 = auto_exposure(resize_max(R, 768), p, exposure_metric(ref), k0)
-    ref_w, m, n_in = register(apply_style(R, p, ev0, k0), ref)
-    log(f"{Path(finished_jpg).name}：對位 inliers={n_in}，重疊 {m.mean():.0%}")
+    target = exposure_metric(ref)
+    ev0 = auto_exposure(resize_max(R, 768), p, target, k0,
+                        clipped=cv2.resize(clip, resize_max(R, 768).shape[1::-1], interpolation=cv2.INTER_AREA))
+    ref_w, m, n_in = register(apply_style(R, p, ev0, k0, clip), ref)
+    log(f"{Path(bracket_dir).name} → {Path(finished_jpg).name}：對位 inliers={n_in}，重疊 {m.mean():.0%}")
     s = width / R.shape[1]
     small = lambda x: cv2.resize(x, (width, round(R.shape[0] * s)), interpolation=cv2.INTER_AREA)
-    return small(R), _lab(small(ref_w)), small(m.astype(np.float32)) > 0.99, exposure_metric(ref)
+    return small(R), _lab(small(ref_w)), small(m.astype(np.float32)) > 0.99, target, small(clip)
 
 
 def calibrate_style(pairs, style_path=PRESETS / "style_default.xmp", width: int = 320, log=print) -> dict:
@@ -107,9 +116,9 @@ def calibrate_style(pairs, style_path=PRESETS / "style_default.xmp", width: int 
     def loss(x):
         k = unpack(x)
         tot = 0.0
-        for Rs, ref_lab, ms, target in data:
-            ev = auto_exposure(Rs, p, target, k, iters=12)
-            d = _lab(apply_style(Rs, p, ev, k))[ms] - ref_lab[ms]
+        for Rs, ref_lab, ms, target, cs in data:
+            ev = auto_exposure(Rs, p, target, k, iters=12, clipped=cs)
+            d = _lab(apply_style(Rs, p, ev, k, cs))[ms] - ref_lab[ms]
             tot += float(np.mean(np.abs(d) * np.array([1.0, 1.5, 1.5])))  # 色偏權重較高
         return tot / len(data)
 

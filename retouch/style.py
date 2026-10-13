@@ -22,6 +22,7 @@ K = dict(
     hdr_slope=0.3,     # 壓縮後 log 斜率（越小壓越多）
     hdr_cap=0.2,       # 底層超出 knee 後最多保留幾 EV
     clip_max=0.03,     # 自動曝光：室內過曝像素比例上限（LR 成品約 2.5%）
+    clip_src_max=0.02, # 來源剪裁比例超過此值時，自動曝光不提亮
     wb_auto=0.5,       # 自動白平衡強度：0＝相機白平衡，1＝白牆完全中性（保留部分暖光氛圍）
 )
 # 若有以成品校準過的常數（python -m retouch calibrate-style），覆寫預設值
@@ -82,11 +83,14 @@ def hdr_compress(x: np.ndarray, knee: float, slope: float, radius_frac: float) -
     return (x * gain[..., None]).astype(np.float32)
 
 
-def auto_wb(R: np.ndarray, strength: float) -> np.ndarray:
-    """由亮面中最不飽和的像素（白牆、天花）估計色偏，回傳部分中性化的 RGB 增益。"""
+def auto_wb(R: np.ndarray, strength: float, clipped=None) -> np.ndarray:
+    """由亮面中最不飽和的像素（白牆、天花）估計色偏，回傳部分中性化的 RGB 增益。
+    剪裁像素（純白，不代表真實顏色）不列入估計。"""
     if strength <= 0:
         return np.ones(3, np.float32)
     x = R[::8, ::8].reshape(-1, 3).astype(np.float32)
+    if clipped is not None:
+        x = x[clipped[::8, ::8].ravel() < 0.05]
     y = luma(x)
     lo, hi = np.percentile(y, [50, 98])
     x = x[(y > lo) & (y < hi)]
@@ -107,9 +111,14 @@ def wb_gains(p: dict, k: dict = K) -> np.ndarray:
     return g / (g @ np.array([0.2126, 0.7152, 0.0722], np.float32))
 
 
-def apply_style(R: np.ndarray, p: dict, ev: float = 0.0, k: dict = K) -> np.ndarray:
-    x = R.astype(np.float32) * auto_wb(R, k["wb_auto"]) * wb_gains(p, k) \
+def apply_style(R: np.ndarray, p: dict, ev: float = 0.0, k: dict = K, clipped=None) -> np.ndarray:
+    """clipped：來源已剪裁（所有曝光都過曝）的區域權重 0–1。該處沒有色彩資訊，維持中性白，
+    不套白平衡增益（否則純白會被染成紫藍）。"""
+    x = R.astype(np.float32) * auto_wb(R, k["wb_auto"], clipped) * wb_gains(p, k) \
         * np.float32(2 ** (p.get("Exposure2012", 0) + ev))
+    if clipped is not None:
+        Yx = luma(x)[..., None]
+        x = x + (Yx - x) * clipped[..., None]
     # 亮部／陰影：依平滑底層決定局部 EV 增益，保留細節
     yb = np.clip(linear_to_srgb(luma(x)), 0, 1.5)
     base = _guided_base(yb, k["base_radius"])
@@ -172,17 +181,23 @@ def _bisect(f, target, lo, hi, iters):
 
 
 def auto_exposure(R: np.ndarray, p: dict, target: float = DEFAULT_TARGET, k: dict = K,
-                  lo: float = -6.0, hi: float = 6.0, iters: int = 20) -> float:
+                  lo: float = -6.0, hi: float = 6.0, iters: int = 20, clipped=None) -> float:
     """依場景動態決定 ev：亮面（第 90 百分位）對到 target，
-    但過曝像素比例不得超過 clip_max（白牆、白沙發不過曝）；兩者取較暗者。R 建議先縮到 ~768px。"""
+    但過曝像素比例不得超過 clip_max（白牆、白沙發不過曝）；兩者取較暗者。R 建議先縮到 ~768px。
+    clipped：來源已剪裁區域。剪裁比例 > clip_src_max 時不再提亮（提亮只會擴大死白，無法恢復）。"""
     cache = {}
-    # 室內遮罩：排除遠比室內亮的窗外（平滑後輻射量 > 室內第 90 百分位的 3 倍）
+    # 室內遮罩：排除遠比室內亮的窗外（平滑後輻射量 > 室內第 90 百分位的 3 倍）與來源剪裁區
     Yr = cv2.GaussianBlur(luma(R), (0, 0), 3)
     inner = Yr < 3 * np.percentile(Yr, 90)
+    if clipped is not None:
+        inner &= clipped < 0.5
+    src_clip = float((clipped > 0.5).mean()) if clipped is not None else 0.0
+    if src_clip > k["clip_src_max"]:
+        hi = min(hi, 0.0)
 
     def out(ev):
         if ev not in cache:
-            cache[ev] = luma(apply_style(R, p, ev, k))
+            cache[ev] = luma(apply_style(R, p, ev, k, clipped))
         return cache[ev]
 
     ev_t = _bisect(lambda e: float(np.percentile(out(e), TARGET_PCT)), target, lo, hi, iters)

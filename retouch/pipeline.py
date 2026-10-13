@@ -49,6 +49,17 @@ def analyze_group(thumbs: list[np.ndarray], state_thr: float = 0.015) -> dict:
     return dict(vs=vs, warps=warps, align=align_rep, cal=cal, D=D, B=B, states=states)
 
 
+def source_clipped(frames_of, members, evs) -> np.ndarray:
+    """來源剪裁區：連曝光最低的那張，三個通道都接近飽和的像素（純白，任何曝光都沒有色彩與細節）。
+    以最小通道漸進（0.80→0.97）給權重，只有單一通道飽和的彩色物件（如橘色燈罩）不受影響，也不會出現硬邊。"""
+    darkest = min(members, key=lambda i: evs[i])
+    _, v = next(iter(frames_of([darkest])))
+    mn = np.minimum(np.minimum(v[..., 0], v[..., 1]), v[..., 2])
+    t = np.clip((mn - 0.80) / 0.17, 0, 1)
+    w = (t * t * (3 - 2 * t)).astype(np.float32)
+    return cv2.GaussianBlur(w, (0, 0), max(1.0, v.shape[1] / 1500))
+
+
 def _compose(frames_of, curves, evs, states, switches: dict) -> np.ndarray:
     """環境光 HDR + Σ a_k·Δ_k。frames_of(members) 產生 (i, 已對齊編碼影像)。"""
     R_amb, _ = hdr_merge(frames_of(states.members[states.ambient]), curves, evs)
@@ -112,6 +123,12 @@ def run(input_dir, out_dir, style_path=PRESETS / "style_default.xmp", lights_pat
                      calibration_tree=[[files[i], files[j]] for i, j in A["cal"].tree],
                      curves_ok=[c.ok for c in curves],
                      difference=np.round(A["D"], 4).tolist())
+        if len(idx) > 1:
+            # 對位不可靠（cc 過低）的張不參與合成，避免重影；同狀態至少保留一張
+            bad = {r["index"] for r in A["align"] if not r.get("trusted", True)}
+            if bad:
+                states.members = [[i for i in m if i not in bad] or m for m in states.members]
+                log(f"  注意：{'、'.join(files[i] for i in sorted(bad))} 無法可靠對齊，未參與合成")
         g["exposure"] = []
         for k, v in enumerate(vs):
             lab, c, d = exposure_label(v)
@@ -139,13 +156,20 @@ def run(input_dir, out_dir, style_path=PRESETS / "style_default.xmp", lights_pat
                 outputs.append((f"_變體S{s}", vst))
         g["outputs"] = []
         for suffix, st in outputs:
+            amb = st.members[st.ambient]
             R_small = _compose(thumb_frames, curves, evs, st, switches)
-            ev = auto_exposure(resize_max(R_small, 768), p, target)
+            clip_s = source_clipped(thumb_frames, amb, evs)
+            Rs = resize_max(R_small, 768)
+            cs = cv2.resize(clip_s, (Rs.shape[1], Rs.shape[0]), interpolation=cv2.INTER_AREA)
+            ev = auto_exposure(Rs, p, target, clipped=cs)
+            frac = float((clip_s > 0.5).mean())
+            if frac > 0.005:
+                log(f"  注意：{frac:.1%} 畫面在所有曝光中都已過曝（無較暗來源），該處無法恢復細節，維持中性白")
             R = _compose(frames_of, curves, evs, st, switches)
-            img = apply_style(R, p, ev)
+            img = apply_style(R, p, ev, clipped=source_clipped(frames_of, amb, evs))
             fn = out / f"{name}{suffix}.{'tif' if tiff else 'jpg'}"
             (save_tiff16 if tiff else save_jpg)(fn, img)
-            g["outputs"].append(dict(file=fn.name, auto_ev=round(ev, 2),
+            g["outputs"].append(dict(file=fn.name, auto_ev=round(ev, 2), unrecoverable_clip=round(frac, 4),
                                      switches={k: v for k, v in switches.items() if v}))
             log(f"  → {fn.name}（自動曝光 {ev:+.2f} EV）")
             del R, img
