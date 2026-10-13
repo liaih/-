@@ -22,6 +22,10 @@ K = dict(
     hdr_slope=0.3,     # 壓縮後 log 斜率（越小壓越多）
     hdr_cap=0.2,       # 底層超出 knee 後最多保留幾 EV
     clip_max=0.03,     # 自動曝光：室內過曝像素比例上限（LR 成品約 2.5%）
+    wb_shadow=0.15,    # 中暗部白平衡修正比例（1＝與亮面相同）；亮度 0.40→0.75 漸進到完整修正
+    chroma_smooth=0.003,  # 色度平滑半徑（佔寬度比例），去 JPG 色斑
+    neutral_keep=0.4,  # 低彩度面殘留偏色保留比例（1＝不處理）
+    neutral_c_lo=2.0, neutral_c_hi=9.0,  # Lab 彩度：低於 lo 視為中性面、高於 hi 視為有色材質
     shoulder=0.85,     # 高光肩部起點（輸出亮度）
     white_max=0.97,    # 高光肩部上限：最亮處趨近此值，不硬切成純白
     clip_src_max=0.02, # 來源剪裁比例超過此值時，自動曝光不提亮
@@ -117,8 +121,14 @@ def apply_style(R: np.ndarray, p: dict, ev: float = 0.0, k: dict = K, clipped=No
     """clipped：來源已剪裁（所有曝光都過曝）的區域權重 0–1。該處沒有色彩資訊，維持中性白，
     不套白平衡增益（否則純白會被染成紫藍），也不壓暗（壓暗只會變成一片灰，不是真的恢復）。
     hdr：輸入是否為多張合成的 HDR。單張 JPG 本身已到白點，不做 HDR 亮部壓縮（否則畫面發灰、失去層次）。"""
-    x = R.astype(np.float32) * auto_wb(R, k["wb_auto"], clipped) * wb_gains(p, k) \
-        * np.float32(2 ** (p.get("Exposure2012", 0) + ev))
+    x = R.astype(np.float32) * np.float32(2 ** (p.get("Exposure2012", 0) + ev))
+    # 白平衡隨亮度：亮面（白牆、天花）完整修正；暗部（地板、石材、深色家具）只部分修正，
+    # 避免整張一起往藍調、暗部變紫，造成亮暗面色調不一致（看起來顏色雜）
+    G = auto_wb(R, k["wb_auto"], clipped) * wb_gains(p, k)
+    yw = np.clip(linear_to_srgb(luma(x)), 0, 1)
+    tw = np.clip((yw - 0.40) / 0.35, 0, 1)
+    wgt = k["wb_shadow"] + (1 - k["wb_shadow"]) * (tw * tw * (3 - 2 * tw))
+    x = x * np.exp(np.log(G)[None, None, :] * wgt[..., None])
     if clipped is not None:
         Yx = luma(x)[..., None]
         x = x + (Yx - x) * clipped[..., None]
@@ -166,7 +176,32 @@ def apply_style(R: np.ndarray, p: dict, ev: float = 0.0, k: dict = K, clipped=No
     if hl.any():
         V = V * (1 + k["hsl_lum"] * (Wh @ hl) * S)
     hsv = np.stack([H, np.clip(S * f, 0, 1), np.clip(V, 0, 1)], -1).astype(np.float32)
-    return np.clip(cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB), 0, 1)
+    return color_cleanup(np.clip(cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB), 0, 1), k)
+
+
+def _guided(I: np.ndarray, p: np.ndarray, r: int, eps: float) -> np.ndarray:
+    box = lambda a: cv2.boxFilter(a, -1, (2 * r + 1, 2 * r + 1), borderType=cv2.BORDER_REFLECT)
+    mI, mp = box(I), box(p)
+    a = (box(I * p) - mI * mp) / (box(I * I) - mI * mI + eps)
+    b = mp - a * mI
+    return box(a) * I + box(b)
+
+
+def color_cleanup(rgb: np.ndarray, k: dict = K) -> np.ndarray:
+    """色彩淨化：(1) 色度沿亮度邊緣平滑，去除 JPG 色斑；(2) 低彩度面（白牆、天花、灰櫃）的殘留偏色降低，
+    有彩度的材質（木皮、石材紋、燈罩）不受影響。"""
+    if k["neutral_keep"] >= 1 and k["chroma_smooth"] <= 0:
+        return rgb
+    lab = cv2.cvtColor(rgb.astype(np.float32), cv2.COLOR_RGB2LAB)
+    L, A, B = lab[..., 0] / 100, lab[..., 1], lab[..., 2]
+    if k["chroma_smooth"] > 0:
+        r = max(2, round(k["chroma_smooth"] * rgb.shape[1]))
+        A, B = _guided(L, A, r, 1e-3), _guided(L, B, r, 1e-3)
+    C = np.hypot(A, B)
+    t = np.clip((C - k["neutral_c_lo"]) / (k["neutral_c_hi"] - k["neutral_c_lo"]), 0, 1)
+    f = k["neutral_keep"] + (1 - k["neutral_keep"]) * (t * t * (3 - 2 * t))
+    lab[..., 1], lab[..., 2] = A * f, B * f
+    return np.clip(cv2.cvtColor(lab, cv2.COLOR_LAB2RGB), 0, 1)
 
 
 # ---------- 自動曝光 ----------
