@@ -13,7 +13,7 @@ from .merge import (calibrate_chain, difference_matrix, dilate_masks, cluster_st
 from .style import apply_style, auto_exposure, DEFAULT_TARGET
 from .xmp import parse_xmp
 
-PRESETS = Path(__file__).resolve().parent.parent / "presets"
+from . import PRESETS
 
 
 def default_target() -> float:
@@ -63,9 +63,10 @@ def _compose(frames_of, curves, evs, states, switches: dict) -> np.ndarray:
 def run(input_dir, out_dir, style_path=PRESETS / "style_default.xmp", lights_path=None,
         target: float | None = None, tiff: bool = False, analysis_side: int = 1536,
         group_thr: float = 0.35, state_thr: float = 0.015, previews: bool = True,
-        log=print) -> dict:
+        log=print, progress=None) -> dict:
+    """input_dir 可為資料夾，或照片路徑清單（介面逐張匯入時）。progress(完成數, 總數) 供介面顯示進度。"""
     out = Path(out_dir); out.mkdir(parents=True, exist_ok=True)
-    paths = list_images(input_dir)
+    paths = sorted(Path(q) for q in input_dir) if isinstance(input_dir, (list, tuple)) else list_images(input_dir)
     if not paths:
         raise FileNotFoundError(f"資料夾內沒有影像：{input_dir}")
     p = parse_xmp(style_path)
@@ -84,6 +85,8 @@ def run(input_dir, out_dir, style_path=PRESETS / "style_default.xmp", lights_pat
         pv_dir.mkdir(exist_ok=True)
 
     for gi, idx in enumerate(groups):
+        if progress:
+            progress(gi, len(groups))
         name = f"{gi + 1:02d}_{paths[idx[0]].stem}"
         files = [paths[i].name for i in idx]
         log(f"[{name}] {len(idx)} 張")
@@ -156,6 +159,8 @@ def run(input_dir, out_dir, style_path=PRESETS / "style_default.xmp", lights_pat
                     save_jpg(pv_dir / f"{name}_S{s}_燈光.jpg", apply_style(R_l, p, ev), 90)
         report["groups"].append(g)
 
+    if progress:
+        progress(len(groups), len(groups))
     (out / "報告.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
     (out / "燈光開關表_範本.json").write_text(json.dumps(template, ensure_ascii=False, indent=1),
                                          encoding="utf-8")

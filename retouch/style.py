@@ -25,7 +25,8 @@ K = dict(
     wb_auto=0.5,       # 自動白平衡強度：0＝相機白平衡，1＝白牆完全中性（保留部分暖光氛圍）
 )
 # 若有以成品校準過的常數（python -m retouch calibrate-style），覆寫預設值
-_K_FILE = Path(__file__).resolve().parent.parent / "presets" / "style_k.json"
+from . import PRESETS as _PRESETS
+_K_FILE = _PRESETS / "style_k.json"
 if _K_FILE.exists():
     import json
     K.update(json.loads(_K_FILE.read_text(encoding="utf-8"))["K"])

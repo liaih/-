@@ -1,0 +1,35 @@
+name: 建置 Windows 執行檔
+
+on:
+  push:
+    branches: [claude/photo-editing-app-dev-lcggsw, main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 安裝套件
+        run: pip install numpy opencv-python-headless rawpy PySide6 pyinstaller
+      - name: 打包 EXE
+        run: pyinstaller --noconfirm --onefile --windowed --name QuickRetouch --add-data "presets;presets" retouch_app.py
+      - name: 啟動 EXE 實測（匯入→修圖→截圖）
+        shell: pwsh
+        run: |
+          python tools/make_demo_photos.py demo
+          $p = Start-Process -FilePath dist\QuickRetouch.exe -ArgumentList "--demo","demo","--screenshot","screenshot.png" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "EXE 結束碼 $($p.ExitCode)" }
+          if (!(Test-Path screenshot.png)) { throw "沒有截圖" }
+          if (!(Test-Path demo\修圖輸出\報告.json)) { throw "沒有輸出" }
+          Get-ChildItem demo\修圖輸出
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QuickRetouch-windows
+          path: |
+            dist/QuickRetouch.exe
+            screenshot.png
+            demo/修圖輸出
