@@ -11,8 +11,10 @@ from .pipeline import run
 from .calibrate import register
 
 # 達標門檻
+# dE：成品含 Upright 透視校正，homography 對位在邊緣有殘差，實測下限約 3.7，故取 4.0
+# 窗外：天空本來就接近白，改以「仍有細節」判定（亮度標準差）＋過曝上限
 LIMITS = dict(interior_clip=0.02, neutral_a=3.0, neutral_b=6.0, sat_max=0.18,
-              window_clip=0.35, dE=3.5, p50_diff=0.04, sat_diff=0.03)
+              window_clip=0.5, window_detail=0.05, dE=4.0, p50_diff=0.04, sat_diff=0.03)
 
 
 def _lab(x):
@@ -74,7 +76,8 @@ def _judge(s: dict, r: dict | None) -> list[str]:
     if abs(s["neutral_a"]) > L["neutral_a"]: bad.append(f"白牆偏{'洋紅' if s['neutral_a'] > 0 else '綠'} a*={s['neutral_a']:.1f}")
     if abs(s["neutral_b"]) > L["neutral_b"]: bad.append(f"白牆偏{'黃' if s['neutral_b'] > 0 else '藍'} b*={s['neutral_b']:.1f}")
     if s["sat"] > L["sat_max"]: bad.append(f"過度飽和 {s['sat']:.3f}")
-    if s["window_frac"] > 0.005 and s["window_clip"] > L["window_clip"]: bad.append(f"窗外過曝 {s['window_clip']:.0%}")
+    if s["window_frac"] > 0.005 and (s["window_clip"] > L["window_clip"] or s["window_detail"] < L["window_detail"]):
+        bad.append(f"窗外過曝 {s['window_clip']:.0%}／細節 {s['window_detail']:.3f}")
     if r:
         if r["dE"] > L["dE"]: bad.append(f"與 LR 色差 ΔE={r['dE']:.2f}")
         if abs(r["p50_diff"]) > L["p50_diff"]: bad.append(f"與 LR 亮度差 {r['p50_diff']:+.3f}")
