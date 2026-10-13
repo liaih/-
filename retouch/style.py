@@ -20,6 +20,11 @@ K = dict(
     hdr_knee=0.6,      # 線性亮度超過此值的底層開始壓縮（窗外等 HDR 亮部）
     hdr_slope=0.3,     # 壓縮後 log 斜率（越小壓越多）
 )
+# 若有以成品校準過的常數（python -m retouch calibrate-style），覆寫預設值
+_K_FILE = Path(__file__).resolve().parent.parent / "presets" / "style_k.json"
+if _K_FILE.exists():
+    import json
+    K.update(json.loads(_K_FILE.read_text(encoding="utf-8"))["K"])
 HSL_CENTERS = [0, 30, 60, 120, 180, 240, 270, 300]
 HSL_COLORS = ["Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "Magenta"]
 
@@ -115,19 +120,25 @@ def apply_style(R: np.ndarray, p: dict, ev: float = 0.0, k: dict = K) -> np.ndar
 
 
 # ---------- 自動曝光 ----------
-DEFAULT_TARGET = 0.50  # 套風格後的亮度中位數（sRGB 編碼）；建議用 learn-target 由成品學習
+# 以亮度第 90 百分位（白牆、天花等亮面）為準，不用中位數：中位數受深色家具／牆面比例影響太大。
+TARGET_PCT = 90
+DEFAULT_TARGET = 0.91  # 由 2-4.jpg 學得；可用 learn-target 由其他成品重學
+
+
+def exposure_metric(rgb: np.ndarray) -> float:
+    return float(np.percentile(luma(rgb), TARGET_PCT))
 
 
 def learn_target(paths: list[str | Path]) -> float:
-    """由使用者的成品 JPG 學習目標亮度中位數。"""
-    return float(np.median([np.median(luma(load_image(p, 1024))) for p in paths]))
+    """由使用者的成品 JPG 學習目標亮度（第 90 百分位）。"""
+    return float(np.median([exposure_metric(load_image(p, 1024)) for p in paths]))
 
 
 def auto_exposure(R: np.ndarray, p: dict, target: float = DEFAULT_TARGET, k: dict = K,
                   lo: float = -6.0, hi: float = 6.0, iters: int = 22) -> float:
-    """二分搜尋 ev，使 apply_style 後的亮度中位數 = target。R 建議先縮到 ~768px。"""
+    """二分搜尋 ev，使 apply_style 後的亮度第 90 百分位 = target。R 建議先縮到 ~768px。"""
     for _ in range(iters):
         mid = (lo + hi) / 2
-        m = float(np.median(luma(apply_style(R, p, mid, k))))
+        m = exposure_metric(apply_style(R, p, mid, k))
         lo, hi = (mid, hi) if m < target else (lo, mid)
     return (lo + hi) / 2

@@ -1,0 +1,19 @@
+{
+ "K": {
+  "temp": 0.0222,
+  "tint": 0.01,
+  "shadows": 2.5049,
+  "highlights": 1.6041,
+  "blacks": 0.582,
+  "whites": 0.0,
+  "contrast": 0.2072,
+  "vibrance": 0.0,
+  "saturation": 1.4808,
+  "hsl_sat": 1.3258,
+  "hdr_knee": 0.5602,
+  "hdr_slope": 0.5262
+ },
+ "finished": "2-4.jpg",
+ "loss_before": 5.825,
+ "loss_after": 2.319
+}
