@@ -14,10 +14,10 @@ from .style import K, apply_style, auto_exposure, exposure_metric
 from .xmp import parse_xmp
 
 # 要擬合的常數與合理範圍
-FIT = {"temp": (0.0, 0.05), "tint": (0.0, 0.05), "shadows": (0.2, 3.0), "highlights": (0.2, 3.0),
-       "blacks": (0.0, 2.0), "whites": (0.0, 1.5), "contrast": (0.0, 1.5),
-       "vibrance": (0.0, 3.0), "saturation": (0.0, 3.0), "hsl_sat": (0.0, 2.0),
-       "hdr_knee": (0.2, 2.0), "hdr_slope": (0.1, 1.0)}
+FIT = {"wb_auto": (0.0, 1.0), "temp": (0.0, 0.05), "tint": (0.0, 0.05), "shadows": (0.2, 3.0), "highlights": (0.2, 3.0),
+       "blacks": (0.0, 2.0), "whites": (0.0, 1.5), "contrast": (0.0, 3.0),
+       "vibrance": (0.0, 3.0), "saturation": (0.0, 3.0), "hsl_sat": (0.0, 2.0)}
+# 註：HDR 亮部壓縮常數（hdr_*）不擬合：參考成品若無窗景，這些常數無約束，會被擬合到任意值
 STYLE_K_FILE = PRESETS / "style_k.json"
 
 
@@ -72,9 +72,8 @@ def _nelder_mead(f, x0, step, iters=300, tol=1e-5):
     return pts[i], vals[i]
 
 
-def calibrate_style(bracket_dir, finished_jpg, style_path=PRESETS / "style_default.xmp",
-                    width: int = 400, log=print) -> dict:
-    p = parse_xmp(style_path)
+def _prepare(bracket_dir, finished_jpg, p, k0, width, log):
+    """單一參考對：HDR（縮圖）、對位後的成品 Lab、有效遮罩、初始 ev。"""
     paths = list_images(bracket_dir)
     thumbs = [load_image(q, 1024) for q in paths]
     groups, _ = group_by_angle(thumbs)
@@ -83,34 +82,45 @@ def calibrate_style(bracket_dir, finished_jpg, style_path=PRESETS / "style_defau
     st = A["states"]
     R, _ = hdr_merge(((i, A["vs"][i]) for i in st.members[st.ambient]), A["cal"].curves, A["cal"].ev)
     ref = load_image(finished_jpg, 1024)
-    target = exposure_metric(ref)
-    k0 = dict(K)
-    ev0 = auto_exposure(resize_max(R, 768), p, target, k0)
+    ev0 = auto_exposure(resize_max(R, 768), p, exposure_metric(ref), k0)
     ref_w, m, n_in = register(apply_style(R, p, ev0, k0), ref)
-    log(f"對位 inliers={n_in}，重疊 {m.mean():.0%}")
+    log(f"{Path(finished_jpg).name}：對位 inliers={n_in}，重疊 {m.mean():.0%}")
     s = width / R.shape[1]
     small = lambda x: cv2.resize(x, (width, round(R.shape[0] * s)), interpolation=cv2.INTER_AREA)
-    Rs, ref_lab = small(R), _lab(small(ref_w))
-    ms = small(m.astype(np.float32)) > 0.99
+    return small(R), _lab(small(ref_w)), small(m.astype(np.float32)) > 0.99, exposure_metric(ref)
+
+
+def calibrate_style(pairs, style_path=PRESETS / "style_default.xmp", width: int = 320, log=print) -> dict:
+    """pairs：[(原圖資料夾, LR 成品), ...]。多張參考一起擬合，誤差取平均，避免只對單一案場過度擬合。
+    曝光一律由 auto_exposure 決定（與實際執行相同），避免擬合時的 ev 與實際輸出不一致。"""
+    p = parse_xmp(style_path)
+    k0 = dict(K)
+    data = [_prepare(d, f, p, k0, width, log) for d, f in pairs]
     names = list(FIT)
+    nk = len(names)
     lo = np.array([FIT[n][0] for n in names]); hi = np.array([FIT[n][1] for n in names])
 
     def unpack(x):
-        k = dict(k0); k.update({n: float(v) for n, v in zip(names, np.clip(x[:-1], lo, hi))})
-        return k, float(x[-1])
+        k = dict(k0); k.update({n: float(v) for n, v in zip(names, np.clip(x, lo, hi))})
+        return k
 
     def loss(x):
-        k, ev = unpack(x)
-        d = _lab(apply_style(Rs, p, ev, k))[ms] - ref_lab[ms]
-        return float(np.mean(np.abs(d) * np.array([1.0, 1.5, 1.5])))  # 色偏權重較高
+        k = unpack(x)
+        tot = 0.0
+        for Rs, ref_lab, ms, target in data:
+            ev = auto_exposure(Rs, p, target, k, iters=12)
+            d = _lab(apply_style(Rs, p, ev, k))[ms] - ref_lab[ms]
+            tot += float(np.mean(np.abs(d) * np.array([1.0, 1.5, 1.5])))  # 色偏權重較高
+        return tot / len(data)
 
-    x0 = np.array([k0[n] for n in names] + [ev0])
+    x0 = np.array([k0[n] for n in names])
     l0 = loss(x0)
-    x, l1 = _nelder_mead(loss, x0, np.r_[(hi - lo) * 0.15, 0.3], iters=600)
-    k1, _ = unpack(x)
-    log(f"Lab 平均誤差 {l0:.2f} → {l1:.2f}")
+    x, l1 = _nelder_mead(loss, x0, (hi - lo) * 0.15, iters=60 * nk)
+    k1 = unpack(x)
+    log(f"Lab 平均誤差 {l0:.2f} → {l1:.2f}（{len(data)} 張參考）")
     fitted = {n: round(k1[n], 4) for n in names}
-    STYLE_K_FILE.write_text(json.dumps({"K": fitted, "finished": Path(finished_jpg).name,
+    keep = {n: K[n] for n in ("hdr_knee", "hdr_cap", "clip_max")}
+    STYLE_K_FILE.write_text(json.dumps({"K": {**fitted, **keep}, "finished": [Path(f).name for _, f in pairs],
                                         "loss_before": round(l0, 3), "loss_after": round(l1, 3)},
                                        ensure_ascii=False, indent=1), encoding="utf-8")
-    return dict(K=fitted, loss_before=l0, loss_after=l1, target=target)
+    return dict(K=fitted, loss_before=l0, loss_after=l1)

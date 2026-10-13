@@ -1,7 +1,8 @@
 """命令列：
   python -m retouch run 輸入資料夾 -o 輸出資料夾 [--lights 燈光開關表.json] [--tiff]
   python -m retouch learn-target 成品1.jpg [成品2.jpg ...]
-  python -m retouch calibrate-style 原圖資料夾 成品.jpg
+  python -m retouch calibrate-style 原圖資料夾 成品.jpg [原圖資料夾2 成品2.jpg ...]
+  python -m retouch verify cases.json -o 驗收資料夾
 """
 from __future__ import annotations
 import argparse
@@ -28,14 +29,22 @@ def main(argv=None) -> int:
     r.add_argument("--no-previews", action="store_true", help="不輸出環境光／各燈光預覽")
     t = sub.add_parser("learn-target", help="由成品 JPG 學習目標亮度")
     t.add_argument("samples", nargs="+")
-    c = sub.add_parser("calibrate-style", help="以 LR 成品校準風格常數")
-    c.add_argument("brackets", help="成品對應的同機位原圖資料夾")
-    c.add_argument("finished", help="LR 成品 JPG（只套 xmp 的版本）")
+    c = sub.add_parser("calibrate-style", help="以 LR 成品校準風格常數（可多組）")
+    c.add_argument("pairs", nargs="+", help="原圖資料夾 成品.jpg [原圖資料夾2 成品2.jpg ...]")
     c.add_argument("--style", default=str(PRESETS / "style_default.xmp"))
+    v = sub.add_parser("verify", help="自動化驗收：原圖｜APP｜LR 對照與量測")
+    v.add_argument("cases", help="cases.json")
+    v.add_argument("-o", "--output", required=True)
     a = ap.parse_args(argv)
+    if a.cmd == "verify":
+        from .verify import verify
+        res = verify(a.cases, a.output)
+        return 0 if all(g["passed"] for c in res.values() for g in c.values()) else 1
     if a.cmd == "calibrate-style":
         from .calibrate import calibrate_style
-        r = calibrate_style(a.brackets, a.finished, a.style)
+        if len(a.pairs) % 2:
+            ap.error("calibrate-style 需成對提供：原圖資料夾 成品.jpg")
+        r = calibrate_style(list(zip(a.pairs[::2], a.pairs[1::2])), a.style)
         print("已存 presets/style_k.json：", r["K"])
         return 0
     if a.cmd == "learn-target":
