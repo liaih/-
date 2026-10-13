@@ -161,12 +161,13 @@ def run(input_dir, out_dir, style_path=PRESETS / "style_default.xmp", lights_pat
             clip_s = source_clipped(thumb_frames, amb, evs)
             Rs = resize_max(R_small, 768)
             cs = cv2.resize(clip_s, (Rs.shape[1], Rs.shape[0]), interpolation=cv2.INTER_AREA)
-            ev = auto_exposure(Rs, p, target, clipped=cs)
+            hdr = len(amb) > 1
+            ev = auto_exposure(Rs, p, target, clipped=cs, hdr=hdr)
             frac = float((clip_s > 0.5).mean())
             if frac > 0.005:
                 log(f"  注意：{frac:.1%} 畫面在所有曝光中都已過曝（無較暗來源），該處無法恢復細節，維持中性白")
             R = _compose(frames_of, curves, evs, st, switches)
-            img = apply_style(R, p, ev, clipped=source_clipped(frames_of, amb, evs))
+            img = apply_style(R, p, ev, clipped=source_clipped(frames_of, amb, evs), hdr=hdr)
             fn = out / f"{name}{suffix}.{'tif' if tiff else 'jpg'}"
             (save_tiff16 if tiff else save_jpg)(fn, img)
             g["outputs"].append(dict(file=fn.name, auto_ev=round(ev, 2), unrecoverable_clip=round(frac, 4),

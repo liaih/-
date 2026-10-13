@@ -90,13 +90,14 @@ def _prepare(bracket_dir, finished_jpg, p, k0, width, log):
     clip = source_clipped(frames, amb, evs)
     ref = load_image(finished_jpg, 1024)
     target = exposure_metric(ref)
-    ev0 = auto_exposure(resize_max(R, 768), p, target, k0,
+    hdr = len(amb) > 1
+    ev0 = auto_exposure(resize_max(R, 768), p, target, k0, hdr=hdr,
                         clipped=cv2.resize(clip, resize_max(R, 768).shape[1::-1], interpolation=cv2.INTER_AREA))
-    ref_w, m, n_in = register(apply_style(R, p, ev0, k0, clip), ref)
+    ref_w, m, n_in = register(apply_style(R, p, ev0, k0, clip, hdr), ref)
     log(f"{Path(bracket_dir).name} → {Path(finished_jpg).name}：對位 inliers={n_in}，重疊 {m.mean():.0%}")
     s = width / R.shape[1]
     small = lambda x: cv2.resize(x, (width, round(R.shape[0] * s)), interpolation=cv2.INTER_AREA)
-    return small(R), _lab(small(ref_w)), small(m.astype(np.float32)) > 0.99, target, small(clip)
+    return small(R), _lab(small(ref_w)), small(m.astype(np.float32)) > 0.99, target, small(clip), hdr
 
 
 def calibrate_style(pairs, style_path=PRESETS / "style_default.xmp", width: int = 320, log=print) -> dict:
@@ -116,9 +117,9 @@ def calibrate_style(pairs, style_path=PRESETS / "style_default.xmp", width: int 
     def loss(x):
         k = unpack(x)
         tot = 0.0
-        for Rs, ref_lab, ms, target, cs in data:
-            ev = auto_exposure(Rs, p, target, k, iters=12, clipped=cs)
-            d = _lab(apply_style(Rs, p, ev, k, cs))[ms] - ref_lab[ms]
+        for Rs, ref_lab, ms, target, cs, hdr in data:
+            ev = auto_exposure(Rs, p, target, k, iters=12, clipped=cs, hdr=hdr)
+            d = _lab(apply_style(Rs, p, ev, k, cs, hdr))[ms] - ref_lab[ms]
             tot += float(np.mean(np.abs(d) * np.array([1.0, 1.5, 1.5])))  # 色偏權重較高
         return tot / len(data)
 

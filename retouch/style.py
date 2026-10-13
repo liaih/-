@@ -111,9 +111,10 @@ def wb_gains(p: dict, k: dict = K) -> np.ndarray:
     return g / (g @ np.array([0.2126, 0.7152, 0.0722], np.float32))
 
 
-def apply_style(R: np.ndarray, p: dict, ev: float = 0.0, k: dict = K, clipped=None) -> np.ndarray:
+def apply_style(R: np.ndarray, p: dict, ev: float = 0.0, k: dict = K, clipped=None, hdr: bool = True) -> np.ndarray:
     """clipped：來源已剪裁（所有曝光都過曝）的區域權重 0–1。該處沒有色彩資訊，維持中性白，
-    不套白平衡增益（否則純白會被染成紫藍）。"""
+    不套白平衡增益（否則純白會被染成紫藍），也不壓暗（壓暗只會變成一片灰，不是真的恢復）。
+    hdr：輸入是否為多張合成的 HDR。單張 JPG 本身已到白點，不做 HDR 亮部壓縮（否則畫面發灰、失去層次）。"""
     x = R.astype(np.float32) * auto_wb(R, k["wb_auto"], clipped) * wb_gains(p, k) \
         * np.float32(2 ** (p.get("Exposure2012", 0) + ev))
     if clipped is not None:
@@ -125,8 +126,11 @@ def apply_style(R: np.ndarray, p: dict, ev: float = 0.0, k: dict = K, clipped=No
     ws = 1 - _smoothstep(0.05, 0.6, base)
     wh = _smoothstep(0.45, 1.05, base)
     loc = p.get("Shadows2012", 0) / 100 * k["shadows"] * ws + p.get("Highlights2012", 0) / 100 * k["highlights"] * wh
+    if clipped is not None:
+        loc = np.where(loc < 0, loc * (1 - clipped), loc)
     x *= np.exp2(loc)[..., None]
-    x = hdr_compress(x, k["hdr_knee"], k["hdr_slope"], k["base_radius"])
+    if hdr:
+        x = hdr_compress(x, k["hdr_knee"], k["hdr_slope"], k["base_radius"])
     g = linear_to_srgb(x)
     # 亮度曲線：白色、黑色、對比（以亮度比例套用，維持色相）
     Y = luma(g)
@@ -181,7 +185,7 @@ def _bisect(f, target, lo, hi, iters):
 
 
 def auto_exposure(R: np.ndarray, p: dict, target: float = DEFAULT_TARGET, k: dict = K,
-                  lo: float = -6.0, hi: float = 6.0, iters: int = 20, clipped=None) -> float:
+                  lo: float = -6.0, hi: float = 6.0, iters: int = 20, clipped=None, hdr: bool = True) -> float:
     """依場景動態決定 ev：亮面（第 90 百分位）對到 target，
     但過曝像素比例不得超過 clip_max（白牆、白沙發不過曝）；兩者取較暗者。R 建議先縮到 ~768px。
     clipped：來源已剪裁區域。剪裁比例 > clip_src_max 時不再提亮（提亮只會擴大死白，無法恢復）。"""
@@ -197,7 +201,7 @@ def auto_exposure(R: np.ndarray, p: dict, target: float = DEFAULT_TARGET, k: dic
 
     def out(ev):
         if ev not in cache:
-            cache[ev] = luma(apply_style(R, p, ev, k, clipped))
+            cache[ev] = luma(apply_style(R, p, ev, k, clipped, hdr))
         return cache[ev]
 
     ev_t = _bisect(lambda e: float(np.percentile(out(e), TARGET_PCT)), target, lo, hi, iters)
