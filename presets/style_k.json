@@ -1,6 +1,6 @@
 {
  "K": {
-  "wb_auto": 1.0,
+  "wb_auto": 0.8,
   "temp": 0.0113,
   "tint": 0.0064,
   "shadows": 2.0645,
@@ -20,5 +20,6 @@
   "ref_2-4.jpg"
  ],
  "loss_before": 2.551,
- "loss_after": 2.379
+ "loss_after": 2.379,
+ "note": "wb_auto 由 1.0 調為 0.8：單張剪裁照的白牆不偏藍，吧檯多張與客廳仍達標"
 }
