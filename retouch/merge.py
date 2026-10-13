@@ -230,7 +230,7 @@ def _small(x: np.ndarray, width: int = 512) -> np.ndarray:
 
 
 def light_difference(v_i, v_j, c_i: Curve, c_j: Curve, thr: float = np.log(1.15),
-                     width: int = 512) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                     width: int = 512, tol: int = 2) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """回傳 (i 比 j 亮, j 比 i 亮, 可比較) 三張遮罩（width 寬的縮圖）。
     過曝像素視為下限、過暗像素視為上限；只在界限已足以判定時才算差異。"""
     vi, vj = _small(v_i, width), _small(v_j, width)
@@ -241,10 +241,12 @@ def light_difference(v_i, v_j, c_i: Curve, c_j: Curve, thr: float = np.log(1.15)
     dk_i, dk_j = dark_mask(vi), dark_mask(vj)
     up_i = np.log(luma(c_i(np.full(3, LO, np.float32))) + LOG_EPS)  # 過暗像素的上限
     up_j = np.log(luma(c_j(np.full(3, LO, np.float32))) + LOG_EPS)
-    d = Yi - Yj
+    # 容忍殘餘對位誤差：須比對方鄰域內最亮值還亮才算（燈光外溢平滑，不受影響；邊緣錯位會被吸收）
+    ker_t = np.ones((2 * tol + 1, 2 * tol + 1), np.uint8)
+    Yi_max, Yj_max = cv2.dilate(Yi, ker_t), cv2.dilate(Yj, ker_t)
     both = ok_i & ok_j
-    i_br = (both & (d > thr)) | (cl_i & ok_j & (d > thr)) | (ok_i & dk_j & (Yi - up_j > thr))
-    j_br = (both & (d < -thr)) | (cl_j & ok_i & (d < -thr)) | (ok_j & dk_i & (Yj - up_i > thr))
+    i_br = ((both | (cl_i & ok_j)) & (Yi - Yj_max > thr)) | (ok_i & dk_j & (Yi - up_j > thr))
+    j_br = ((both | (cl_j & ok_i)) & (Yj - Yi_max > thr)) | (ok_j & dk_i & (Yj - up_i > thr))
     ker = np.ones((3, 3), np.uint8)
     i_br = cv2.morphologyEx(i_br.astype(np.uint8), cv2.MORPH_OPEN, ker).astype(bool)
     j_br = cv2.morphologyEx(j_br.astype(np.uint8), cv2.MORPH_OPEN, ker).astype(bool)

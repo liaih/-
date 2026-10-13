@@ -17,6 +17,8 @@ K = dict(
     base_radius=0.04,  # 底層平滑半徑（佔短邊比例）
     whites=0.35, blacks=0.9, contrast=0.6,
     vibrance=1.0, saturation=1.0, hsl_sat=1.0, hsl_lum=0.35, hsl_hue=30.0,
+    hdr_knee=0.6,      # 線性亮度超過此值的底層開始壓縮（窗外等 HDR 亮部）
+    hdr_slope=0.3,     # 壓縮後 log 斜率（越小壓越多）
 )
 HSL_CENTERS = [0, 30, 60, 120, 180, 240, 270, 300]
 HSL_COLORS = ["Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "Magenta"]
@@ -56,6 +58,17 @@ def _hue_weights(H: np.ndarray) -> np.ndarray:
     return W
 
 
+def hdr_compress(x: np.ndarray, knee: float, slope: float, radius_frac: float) -> np.ndarray:
+    """HDR 亮部壓縮：只壓 log 亮度的大尺度底層、保留細節（窗外不再整片過曝）。"""
+    Y = np.maximum(luma(x), 1e-6)
+    lY = np.log2(Y)
+    base = _guided_base(lY, radius_frac / 2, eps=0.1)
+    t = np.log2(knee)
+    over = np.maximum(base - t, 0)
+    gain = np.exp2(-over * (1 - slope))
+    return (x * gain[..., None]).astype(np.float32)
+
+
 def wb_gains(p: dict, k: dict = K) -> np.ndarray:
     t, n = p.get("IncrementalTemperature", 0), p.get("IncrementalTint", 0)
     g = np.array([2 ** (k["temp"] * t), 2 ** (-k["tint"] * n), 2 ** (-k["temp"] * t)], np.float32)
@@ -71,6 +84,7 @@ def apply_style(R: np.ndarray, p: dict, ev: float = 0.0, k: dict = K) -> np.ndar
     wh = _smoothstep(0.45, 1.05, base)
     loc = p.get("Shadows2012", 0) / 100 * k["shadows"] * ws + p.get("Highlights2012", 0) / 100 * k["highlights"] * wh
     x *= np.exp2(loc)[..., None]
+    x = hdr_compress(x, k["hdr_knee"], k["hdr_slope"], k["base_radius"])
     g = linear_to_srgb(x)
     # 亮度曲線：白色、黑色、對比（以亮度比例套用，維持色相）
     Y = luma(g)
@@ -101,7 +115,7 @@ def apply_style(R: np.ndarray, p: dict, ev: float = 0.0, k: dict = K) -> np.ndar
 
 
 # ---------- 自動曝光 ----------
-DEFAULT_TARGET = 0.62  # 套風格後的亮度中位數（sRGB 編碼）；建議用 learn-target 由成品學習
+DEFAULT_TARGET = 0.50  # 套風格後的亮度中位數（sRGB 編碼）；建議用 learn-target 由成品學習
 
 
 def learn_target(paths: list[str | Path]) -> float:
