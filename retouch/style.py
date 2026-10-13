@@ -22,6 +22,7 @@ K = dict(
     hdr_slope=0.3,     # 壓縮後 log 斜率（越小壓越多）
     hdr_cap=0.2,       # 底層超出 knee 後最多保留幾 EV
     clip_max=0.03,     # 自動曝光：室內過曝像素比例上限（LR 成品約 2.5%）
+    white_b=-3.5,      # 白牆、天花最終色調（Lab b*，負值＝冷白）；晨陽成品白牆約 -2～-6
     wb_shadow=0.15,    # 中暗部白平衡修正比例（1＝與亮面相同）；亮度 0.40→0.75 漸進到完整修正
     chroma_smooth=0.003,  # 色度平滑半徑（佔寬度比例），去 JPG 色斑
     neutral_keep=0.4,  # 低彩度面殘留偏色保留比例（1＝不處理）
@@ -200,7 +201,15 @@ def color_cleanup(rgb: np.ndarray, k: dict = K) -> np.ndarray:
     C = np.hypot(A, B)
     t = np.clip((C - k["neutral_c_lo"]) / (k["neutral_c_hi"] - k["neutral_c_lo"]), 0, 1)
     f = k["neutral_keep"] + (1 - k["neutral_keep"]) * (t * t * (3 - 2 * t))
-    lab[..., 1], lab[..., 2] = A * f, B * f
+    A, B = A * f, B * f
+    # 公司風格白：亮且接近中性的面（白牆、天花）統一調到 white_b，木皮、石材等有彩度的材質不動
+    if k.get("white_b", 0):
+        tl = np.clip((L - 0.55) / 0.30, 0, 1)
+        C2 = np.hypot(A, B)  # 淨化後彩度；略帶暖色的白牆（C≈4–8）也納入，明顯有色材質（C>14）不動
+        t2 = np.clip((C2 - 6.0) / 8.0, 0, 1)
+        wgt = (tl * tl * (3 - 2 * tl)) * (1 - (t2 * t2 * (3 - 2 * t2)))
+        B = B + (k["white_b"] - B) * wgt * 0.85
+    lab[..., 1], lab[..., 2] = A, B
     return np.clip(cv2.cvtColor(lab, cv2.COLOR_LAB2RGB), 0, 1)
 
 

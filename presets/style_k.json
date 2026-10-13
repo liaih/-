@@ -3,9 +3,9 @@
   "wb_auto": 0.8,
   "temp": 0.0113,
   "tint": 0.0064,
-  "shadows": 2.0645,
+  "shadows": 1.3,
   "highlights": 2.6172,
-  "blacks": 0.0,
+  "blacks": 1.2,
   "whites": 0.5518,
   "contrast": 2.0056,
   "base_gamma": 0.8425,
@@ -21,5 +21,5 @@
  ],
  "loss_before": 2.551,
  "loss_after": 2.379,
- "note": "wb_auto 由 1.0 調為 0.8：單張剪裁照的白牆不偏藍，吧檯多張與客廳仍達標"
+ "note": "晨陽成品風格：白牆冷白（white_b -3.5）、暗部壓黑（shadows 1.3、blacks 1.2）；依公司作品照 11–15 比對"
 }
