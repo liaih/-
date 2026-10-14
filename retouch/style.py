@@ -28,6 +28,8 @@ K = dict(
     neutral_keep=1.0,  # 低彩度面殘留偏色保留比例（1＝不處理；2-4 的米白需保留）
     neutral_c_lo=2.0, neutral_c_hi=9.0,  # Lab 彩度：低於 lo 視為中性面、高於 hi 視為有色材質
     split_hi_b=6.5, split_mid_b=-1.5, split_lo_b=-2.5, split_lo_a=1.2,  # 分離色調（Lab）：亮部 b*、中暗部 b*／a* 偏移，依 2-4 量得
+    texture_keep=0.6,  # 中尺度紋理補回比例（0＝不補）；補到約與原圖相當
+    texture_cap=0.10,  # 每像素補回上限（log 亮度），避免邊緣光暈
     shoulder=0.85,     # 高光肩部起點（輸出亮度）
     white_max=0.97,    # 高光肩部上限：最亮處趨近此值，不硬切成純白
     clip_src_max=0.02, # 來源剪裁比例超過此值時，自動曝光不提亮
@@ -62,6 +64,18 @@ def _guided_base(y: np.ndarray, radius_frac: float, eps: float = 0.02) -> np.nda
         a = cv2.resize(a, (w, h), interpolation=cv2.INTER_LINEAR)
         b = cv2.resize(b, (w, h), interpolation=cv2.INTER_LINEAR)
     return a * y + b
+
+
+def _midband(lY: np.ndarray) -> np.ndarray:
+    """中尺度紋理帶（約寬度 0.3%～2.5%）：牆面雲紋、櫃體斑駁。大半徑模糊在縮圖上做以加速。"""
+    h, w = lY.shape
+    s1, s2 = 0.003 * w, 0.025 * w
+    sc = min(1.0, 1000 / w)
+    small = cv2.resize(lY, (max(1, round(w * sc)), max(1, round(h * sc))), interpolation=cv2.INTER_AREA) if sc < 1 else lY
+    b2 = cv2.GaussianBlur(small, (0, 0), s2 * sc)
+    if sc < 1:
+        b2 = cv2.resize(b2, (w, h), interpolation=cv2.INTER_LINEAR)
+    return cv2.GaussianBlur(lY, (0, 0), s1) - b2
 
 
 def _hue_weights(H: np.ndarray) -> np.ndarray:
@@ -134,6 +148,7 @@ def apply_style(R: np.ndarray, p: dict, ev: float = 0.0, k: dict = K, clipped=No
     if clipped is not None:
         Yx = luma(x)[..., None]
         x = x + (Yx - x) * clipped[..., None]
+    tex_in = _midband(np.log(luma(x) + 1e-4)) if k["texture_keep"] > 0 else None
     # 亮部／陰影：依平滑底層決定局部 EV 增益，保留細節
     yb = np.clip(linear_to_srgb(luma(x)), 0, 1.5)
     base = _guided_base(yb, k["base_radius"])
@@ -162,6 +177,12 @@ def apply_style(R: np.ndarray, p: dict, ev: float = 0.0, k: dict = K, clipped=No
     s0, wm = k["shoulder"], k["white_max"]
     Ys = np.where(Yg > s0, s0 + (wm - s0) * np.tanh((Yg - s0) / (wm - s0)), Yg)
     g = g * (Ys / np.maximum(Yg, 1e-5))[..., None]
+    if tex_in is not None:
+        # 補回局部亮部／陰影調整壓掉的中尺度紋理（牆面、水泥櫃的雲紋），最亮與最暗處減量避免光暈
+        Yg = np.maximum(luma(g), 1e-4)
+        lost = np.clip(tex_in - _midband(np.log(Yg)), -k["texture_cap"], k["texture_cap"])
+        guard = np.clip(Yg / 0.15, 0, 1) * np.clip((0.98 - Yg) / 0.10, 0, 1)
+        g = g * np.exp(k["texture_keep"] * lost * guard)[..., None]
     g = np.clip(g, 0, 1).astype(np.float32)
     # 色彩：HSV 空間
     hsv = cv2.cvtColor(g, cv2.COLOR_RGB2HSV)
