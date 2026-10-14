@@ -21,6 +21,7 @@ K = dict(
     hdr_knee=1.0,      # 底層亮度超過「室內第 90 百分位 × 此倍數」才壓縮（窗外等 HDR 亮部）
     hdr_slope=0.3,     # 壓縮後 log 斜率（越小壓越多）
     hdr_cap=0.2,       # 底層超出 knee 後最多保留幾 EV
+    hdr_pull=0.0,      # 窗外（超出 knee 2 EV 以上）額外壓暗的 EV，讓窗景略暗於白牆、保有顏色
     clip_max=0.03,     # 自動曝光：室內過曝像素比例上限（LR 成品約 2.5%）
     white_b=0.0,       # 白牆、天花最終色調（Lab b*）；0＝不額外調整（依 2-4：亮部保留米白）
     wb_shadow=1.0,     # 中暗部白平衡修正比例（1＝與亮面相同，與 2-4 一致：中暗部偏冷）
@@ -93,7 +94,8 @@ def _hue_weights(H: np.ndarray) -> np.ndarray:
     return W
 
 
-def hdr_compress(x: np.ndarray, knee: float, slope: float, radius_frac: float) -> np.ndarray:
+def hdr_compress(x: np.ndarray, knee: float, slope: float, radius_frac: float, cap: float = None,
+                 pull: float = 0.0) -> np.ndarray:
     """HDR 亮部壓縮：只壓 log 亮度的大尺度底層、保留細節（窗外不再整片過曝）。"""
     Y = np.maximum(luma(x), 1e-6)
     lY = np.log2(Y)
@@ -102,8 +104,16 @@ def hdr_compress(x: np.ndarray, knee: float, slope: float, radius_frac: float) -
     t = np.log2(knee) + float(np.percentile(lY[::4, ::4], 90))
     over = np.maximum(base - t, 0)
     # 漸近壓縮：超出 knee 的 EV 數最多被壓到 cap，再亮的窗外也不會整片過曝
-    cap = K["hdr_cap"]
+    cap = K["hdr_cap"] if cap is None else cap
+    # pull：遠比室內亮的窗外再多壓暗 pull EV（超出 4.5 EV 以上才全量），讓窗景比白牆略暗、保有顏色，室內不受影響
     gain = np.exp2(-(over - over / (1 + over * (1 - slope) / cap)))
+    if pull > 0:
+        # 逐像素判斷（比室內亮面高 3 EV 以上才算窗外，日照沙發不受影響），不用大尺度底層，避免光暈
+        # 窗外遮罩外擴幾個像素再羽化：窗框與窗景交界的混合像素一起壓，不留亮邊
+        px = max(1, round(x.shape[1] / 700))
+        m = _smoothstep(3.0, 4.5, lY - t).astype(np.float32)
+        m = cv2.GaussianBlur(cv2.dilate(m, np.ones((2 * px + 1,) * 2, np.uint8)), (0, 0), px)
+        gain = gain * np.exp2(-pull * m)
     return (x * gain[..., None]).astype(np.float32)
 
 
@@ -173,7 +183,7 @@ def apply_style(R: np.ndarray, p: dict, ev: float = 0.0, k: dict = K, clipped=No
         loc = np.where(loc < 0, loc * (1 - clipped), loc)
     x *= np.exp2(loc)[..., None]
     if hdr:
-        x = hdr_compress(x, k["hdr_knee"], k["hdr_slope"], k["base_radius"])
+        x = hdr_compress(x, k["hdr_knee"], k["hdr_slope"], k["base_radius"], k["hdr_cap"], k["hdr_pull"])
     g = linear_to_srgb(x)
     # 亮度曲線：白色、黑色、對比（以亮度比例套用，維持色相）
     Y = luma(g)
@@ -296,6 +306,8 @@ def auto_exposure(R: np.ndarray, p: dict, target: float = DEFAULT_TARGET, k: dic
     但過曝像素比例不得超過 clip_max（白牆、白沙發不過曝）；兩者取較暗者。R 建議先縮到 ~768px。
     clipped：來源已剪裁區域。剪裁比例 > clip_src_max 時不再提亮（提亮只會擴大死白，無法恢復）。"""
     cache = {}
+    # 曝光依「窗外未額外壓暗」的畫面決定：窗外壓暗不應讓室內跟著被提亮
+    k = {**k, "hdr_pull": 0.0}
     # 室內遮罩：排除遠比室內亮的窗外（平滑後輻射量 > 室內第 90 百分位的 3 倍）與來源剪裁區
     Yr = cv2.GaussianBlur(luma(R), (0, 0), 3)
     inner = Yr < 3 * np.percentile(Yr, 90)

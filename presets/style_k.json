@@ -3,9 +3,9 @@
   "wb_auto": 0.9109,
   "temp": 0.0127,
   "tint": 0.0066,
-  "shadows": 1.0,
+  "shadows": 2.2,
   "highlights": 1.2,
-  "blacks": 0.9685,
+  "blacks": 0.6,
   "whites": 0.6554,
   "contrast": 0.9876,
   "base_gamma": 0.8192,
@@ -14,12 +14,13 @@
   "hsl_sat": 1.0,
   "hdr_knee": 1.0,
   "hdr_cap": 0.2,
-  "clip_max": 0.03
+  "clip_max": 0.03,
+  "hdr_pull": 1.0
  },
  "finished": [
   "ref_2-4.jpg"
  ],
  "loss_before": 2.418,
  "loss_after": 2.415,
- "note": "自然版：局部亮暗調整減弱（避免光暈、波紋放大、假 HDR 感），飽和回到正常"
+ "note": "自然版：局部亮暗調整減弱（避免光暈、波紋放大、假 HDR 感），飽和回到正常；窗外額外壓暗 1 EV、暗部提亮（shadows 2.2、blacks 0.6）"
 }
