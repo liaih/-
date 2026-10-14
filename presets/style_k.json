@@ -1,28 +1,24 @@
 {
  "K": {
-  "wb_auto": 0.8,
-  "temp": 0.0113,
-  "tint": 0.0064,
-  "shadows": 1.3,
-  "highlights": 2.6172,
-  "blacks": 1.2,
-  "whites": 0.5518,
-  "contrast": 2.0056,
-  "base_gamma": 0.8425,
-  "vibrance": 0.2363,
-  "saturation": 1.0496,
-  "hsl_sat": 1.481,
+  "wb_auto": 0.8998,
+  "temp": 0.0129,
+  "tint": 0.0066,
+  "shadows": 1.9862,
+  "highlights": 2.5629,
+  "blacks": 1.0443,
+  "whites": 0.5811,
+  "contrast": 0.82,
+  "base_gamma": 0.8163,
+  "vibrance": 0.2787,
+  "saturation": 1.5054,
+  "hsl_sat": 1.4363,
   "hdr_knee": 1.0,
   "hdr_cap": 0.2,
-  "clip_max": 0.03,
-  "wb_shadow": 1.0,
-  "white_b": 0.0,
-  "neutral_keep": 1.0
+  "clip_max": 0.03
  },
  "finished": [
   "ref_2-4.jpg"
  ],
- "loss_before": 2.551,
- "loss_after": 2.379,
- "note": "晨陽成品風格：白牆冷白（white_b -3.5）、暗部壓黑（shadows 1.3、blacks 1.2）；依公司作品照 11–15 比對"
+ "loss_before": 2.674,
+ "loss_after": 2.418
 }
