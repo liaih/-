@@ -27,9 +27,9 @@ K = dict(
     chroma_smooth=0.003,  # 色度平滑半徑（佔寬度比例），去 JPG 色斑
     neutral_keep=1.0,  # 低彩度面殘留偏色保留比例（1＝不處理；2-4 的米白需保留）
     neutral_c_lo=2.0, neutral_c_hi=9.0,  # Lab 彩度：低於 lo 視為中性面、高於 hi 視為有色材質
-    split_hi_b=6.5, split_mid_b=-1.5, split_lo_b=-2.5, split_lo_a=1.2,  # 分離色調（Lab）：亮部 b*、中暗部 b*／a* 偏移，依 2-4 量得
+    split_hi_b=3.0, split_mid_b=-0.5, split_lo_b=-1.0, split_lo_a=0.0,  # 分離色調（Lab）：亮部 b*、中暗部 b*／a* 偏移，依 2-4 量得
     sharpen=0.45, sharpen_radius=1.0,  # 輸出銳化量與半徑（2000px 寬時的像素）
-    texture_keep=0.6,  # 中尺度紋理補回比例（0＝不補）；補到約與原圖相當
+    texture_keep=0.0,  # 中尺度紋理補回比例（0＝不補；補回會在牆面產生波紋與光暈，改以減弱局部調整保留紋理）
     texture_cap=0.10,  # 每像素補回上限（log 亮度），避免邊緣光暈
     shoulder=0.85,     # 高光肩部起點（輸出亮度）
     white_max=0.97,    # 高光肩部上限：最亮處趨近此值，不硬切成純白
@@ -129,8 +129,20 @@ def auto_wb(R: np.ndarray, strength: float, clipped=None) -> np.ndarray:
     return (g / (g @ np.array([0.2126, 0.7152, 0.0722], np.float32))).astype(np.float32)
 
 
-def wb_gains(p: dict, k: dict = K) -> np.ndarray:
-    t, n = p.get("IncrementalTemperature", 0), p.get("IncrementalTint", 0)
+def scene_warmth(R: np.ndarray) -> float:
+    """場景暖度 0–1：亮面平均 b*（黃）越高越暖。用來決定預設集的色溫／色調增量要套多少：
+    偏黃的照片完整套用，本來就中性的照片不套（否則中性白沙發會被染成淡紫）。"""
+    x = np.clip(linear_to_srgb(R[::8, ::8] / max(np.percentile(luma(R[::8, ::8]), 95), 1e-6) * 0.9), 0, 1)
+    lab = cv2.cvtColor(x.astype(np.float32), cv2.COLOR_RGB2LAB)
+    L, A, B = lab[..., 0], lab[..., 1], lab[..., 2]
+    m = (L > 55) & (np.hypot(A, B) < 25)
+    if m.sum() < 50:
+        return 1.0
+    return float(np.clip((np.median(B[m]) - 3.0) / 8.0, 0, 1))
+
+
+def wb_gains(p: dict, k: dict = K, warmth: float = 1.0) -> np.ndarray:
+    t, n = p.get("IncrementalTemperature", 0) * warmth, p.get("IncrementalTint", 0) * warmth
     g = np.array([2 ** (k["temp"] * t), 2 ** (-k["tint"] * n), 2 ** (-k["temp"] * t)], np.float32)
     return g / (g @ np.array([0.2126, 0.7152, 0.0722], np.float32))
 
@@ -142,7 +154,7 @@ def apply_style(R: np.ndarray, p: dict, ev: float = 0.0, k: dict = K, clipped=No
     x = R.astype(np.float32) * np.float32(2 ** (p.get("Exposure2012", 0) + ev))
     # 白平衡隨亮度：亮面（白牆、天花）完整修正；暗部（地板、石材、深色家具）只部分修正，
     # 避免整張一起往藍調、暗部變紫，造成亮暗面色調不一致（看起來顏色雜）
-    G = auto_wb(R, k["wb_auto"], clipped) * wb_gains(p, k)
+    G = auto_wb(R, k["wb_auto"], clipped) * wb_gains(p, k, scene_warmth(R))
     yw = np.clip(linear_to_srgb(luma(x)), 0, 1)
     tw = np.clip((yw - 0.40) / 0.35, 0, 1)
     wgt = k["wb_shadow"] + (1 - k["wb_shadow"]) * (tw * tw * (3 - 2 * tw))
