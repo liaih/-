@@ -27,6 +27,7 @@ K = dict(
     chroma_smooth=0.003,  # 色度平滑半徑（佔寬度比例），去 JPG 色斑
     neutral_keep=1.0,  # 低彩度面殘留偏色保留比例（1＝不處理；2-4 的米白需保留）
     neutral_c_lo=2.0, neutral_c_hi=9.0,  # Lab 彩度：低於 lo 視為中性面、高於 hi 視為有色材質
+    split_hi_b=6.5, split_mid_b=-1.5, split_lo_b=-2.5, split_lo_a=1.2,  # 分離色調（Lab）：亮部 b*、中暗部 b*／a* 偏移，依 2-4 量得
     shoulder=0.85,     # 高光肩部起點（輸出亮度）
     white_max=0.97,    # 高光肩部上限：最亮處趨近此值，不硬切成純白
     clip_src_max=0.02, # 來源剪裁比例超過此值時，自動曝光不提亮
@@ -209,6 +210,12 @@ def color_cleanup(rgb: np.ndarray, k: dict = K) -> np.ndarray:
         t2 = np.clip((C2 - 6.0) / 8.0, 0, 1)
         wgt = (tl * tl * (3 - 2 * tl)) * (1 - (t2 * t2 * (3 - 2 * t2)))
         B = B + (k["white_b"] - B) * wgt * 0.85
+    # 分離色調（依 2-4）：亮部偏米白、中暗部偏冷帶洋紅
+    ss = lambda a, b_, x: (lambda t: t * t * (3 - 2 * t))(np.clip((x - a) / (b_ - a), 0, 1))
+    w_hi = ss(0.84, 0.94, L)          # 最亮處（白牆、天花）
+    w_lo = 1 - ss(0.62, 0.80, L)      # 中暗部（地板、石材、櫃體陰影）
+    B = B + k["split_hi_b"] * w_hi + k["split_lo_b"] * w_lo + k["split_mid_b"] * (1 - w_hi) * (1 - w_lo)
+    A = A + k["split_lo_a"] * w_lo
     lab[..., 1], lab[..., 2] = A, B
     return np.clip(cv2.cvtColor(lab, cv2.COLOR_LAB2RGB), 0, 1)
 
