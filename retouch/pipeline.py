@@ -164,6 +164,8 @@ def run(input_dir, out_dir, style_path=PRESETS / "style_default.xmp", lights_pat
             hdr = len(amb) > 1
             ev = auto_exposure(Rs, p, target, clipped=cs, hdr=hdr)
             frac = float((clip_s > 0.5).mean())
+            if not hdr and ev >= 2.0:
+                log(f"  注意：這張照片太暗（需提亮 {ev:+.1f} EV），單張提亮會出現雜訊色斑；請把同機位其他曝光一起匯入")
             if frac > 0.005:
                 log(f"  注意：{frac:.1%} 畫面在所有曝光中都已過曝（無較暗來源），該處無法恢復細節，維持中性白")
             R = _compose(frames_of, curves, evs, st, switches)

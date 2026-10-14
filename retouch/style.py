@@ -33,7 +33,8 @@ K = dict(
     texture_cap=0.10,  # 每像素補回上限（log 亮度），避免邊緣光暈
     shoulder=0.85,     # 高光肩部起點（輸出亮度）
     white_max=0.97,    # 高光肩部上限：最亮處趨近此值，不硬切成純白
-    clip_src_max=0.02, # 來源剪裁比例超過此值時，自動曝光不提亮
+    single_ev_max=2.5, # 單張照片自動提亮上限（EV）
+    clip_src_max=0.15, # 來源剪裁比例超過此值（大面積過曝）時，自動曝光不提亮；窗外等小面積剪裁不影響提亮
     wb_auto=0.5,       # 自動白平衡強度：0＝相機白平衡，1＝白牆完全中性（保留部分暖光氛圍）
 )
 # 若有以成品校準過的常數（python -m retouch calibrate-style），覆寫預設值
@@ -291,6 +292,8 @@ def auto_exposure(R: np.ndarray, p: dict, target: float = DEFAULT_TARGET, k: dic
     src_clip = float((clipped > 0.5).mean()) if clipped is not None else 0.0
     if src_clip > k["clip_src_max"]:
         hi = min(hi, 0.0)
+    if not hdr:  # 單張 JPG：提亮過多只會放大雜訊與色斑
+        hi = min(hi, k["single_ev_max"])
 
     def out(ev):
         if ev not in cache:
