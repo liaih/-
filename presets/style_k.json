@@ -14,7 +14,10 @@
   "hsl_sat": 1.481,
   "hdr_knee": 1.0,
   "hdr_cap": 0.2,
-  "clip_max": 0.03
+  "clip_max": 0.03,
+  "wb_shadow": 1.0,
+  "white_b": 0.0,
+  "neutral_keep": 1.0
  },
  "finished": [
   "ref_2-4.jpg"
