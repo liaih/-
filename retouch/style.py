@@ -28,6 +28,7 @@ K = dict(
     neutral_keep=1.0,  # 低彩度面殘留偏色保留比例（1＝不處理；2-4 的米白需保留）
     neutral_c_lo=2.0, neutral_c_hi=9.0,  # Lab 彩度：低於 lo 視為中性面、高於 hi 視為有色材質
     split_hi_b=6.5, split_mid_b=-1.5, split_lo_b=-2.5, split_lo_a=1.2,  # 分離色調（Lab）：亮部 b*、中暗部 b*／a* 偏移，依 2-4 量得
+    sharpen=0.45, sharpen_radius=1.0,  # 輸出銳化量與半徑（2000px 寬時的像素）
     texture_keep=0.6,  # 中尺度紋理補回比例（0＝不補）；補到約與原圖相當
     texture_cap=0.10,  # 每像素補回上限（log 亮度），避免邊緣光暈
     shoulder=0.85,     # 高光肩部起點（輸出亮度）
@@ -199,7 +200,20 @@ def apply_style(R: np.ndarray, p: dict, ev: float = 0.0, k: dict = K, clipped=No
     if hl.any():
         V = V * (1 + k["hsl_lum"] * (Wh @ hl) * S)
     hsv = np.stack([H, np.clip(S * f, 0, 1), np.clip(V, 0, 1)], -1).astype(np.float32)
-    return color_cleanup(np.clip(cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB), 0, 1), k)
+    return sharpen(color_cleanup(np.clip(cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB), 0, 1), k), k)
+
+
+def sharpen(rgb: np.ndarray, k: dict = K) -> np.ndarray:
+    """輸出銳化（類似 LR 輸出銳化）：只作用在亮度，半徑依影像寬度縮放，平坦區（雜訊）減量。"""
+    amt = k["sharpen"]
+    if amt <= 0:
+        return rgb
+    r = k["sharpen_radius"] * rgb.shape[1] / 2000
+    Y = luma(rgb)
+    d = Y - cv2.GaussianBlur(Y, (0, 0), max(0.5, r))
+    edge = np.clip(np.abs(cv2.GaussianBlur(d, (0, 0), 1.0)) / 0.01, 0, 1)  # 平坦牆面的細雜訊少銳化
+    Yn = Y + amt * d * (0.35 + 0.65 * edge)
+    return np.clip(rgb * (np.maximum(Yn, 0) / np.maximum(Y, 1e-4))[..., None], 0, 1).astype(np.float32)
 
 
 def _guided(I: np.ndarray, p: np.ndarray, r: int, eps: float) -> np.ndarray:

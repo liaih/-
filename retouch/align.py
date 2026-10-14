@@ -22,7 +22,8 @@ def estimate_shift(ref: np.ndarray, img: np.ndarray, width: int = 640) -> tuple[
 
 
 def apply_warp(img: np.ndarray, warp: np.ndarray) -> np.ndarray:
-    if abs(warp[0, 2]) < 0.15 and abs(warp[1, 2]) < 0.15:
+    # 位移小於半像素時不重取樣：次像素內插會讓每張都變糊，疊加後更明顯，代價大於對位收益
+    if abs(warp[0, 2]) < 0.5 and abs(warp[1, 2]) < 0.5:
         return img
     h, w = img.shape[:2]
     return cv2.warpAffine(img, warp, (w, h), flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,
