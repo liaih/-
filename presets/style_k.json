@@ -3,12 +3,12 @@
   "wb_auto": 0.9109,
   "temp": 0.0127,
   "tint": 0.0066,
-  "shadows": 1.4,
+  "shadows": 2.0,
   "highlights": 1.2,
   "blacks": 0.9685,
   "whites": 0.6554,
   "contrast": 0.9876,
-  "base_gamma": 0.8192,
+  "base_gamma": 0.65,
   "vibrance": 0.3,
   "saturation": 1.0,
   "hsl_sat": 1.0,
@@ -23,5 +23,5 @@
  ],
  "loss_before": 2.418,
  "loss_after": 2.415,
- "note": "自然版：局部亮暗調整減弱（避免光暈、波紋放大、假 HDR 感），飽和回到正常；窗外亮部上限 0.05 EV、暗部適度提亮（shadows 1.4，黑色不變灰）"
+ "note": "自然版：局部亮暗調整減弱（避免光暈、波紋放大、假 HDR 感），飽和回到正常；窗外亮部上限 0.05 EV、暗部適度提亮（shadows 1.4，黑色不變灰）；室內中間調提亮（base_gamma 0.65、shadows 2.0），白牆亮度不變"
 }

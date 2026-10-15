@@ -333,12 +333,16 @@ def hdr_merge(frames, curves: list[Curve], evs: list[float]) -> tuple[np.ndarray
     num = den = None
     lo_img = hi_img = None
     lo_ev, hi_ev = np.inf, -np.inf
+    best, best_w = None, -1.0
     for i, v in frames:
         R = curves[i](v)
         w = hdr_weight(v)
         if num is None:
             num = np.zeros_like(R); den = np.zeros(R.shape[:2], np.float32)
         num += R * w[..., None]; den += w
+        sw = float(w.mean())
+        if sw > best_w:
+            best, best_w = (R, w), sw
         if evs[i] < lo_ev:
             lo_ev, lo_img = evs[i], (R, v)
         if evs[i] > hi_ev:
@@ -349,7 +353,21 @@ def hdr_merge(frames, curves: list[Curve], evs: list[float]) -> tuple[np.ndarray
         bright = clip_mask(hi_img[1]) if hi_img is not None else np.zeros_like(weak)
         fb = np.where(bright[..., None], lo_img[0], hi_img[0])
         out[weak] = fb[weak]
+    if best is not None and best_w > 0:
+        out = _detail_from(out, *best)
     return out.astype(np.float32), den
+
+
+def _detail_from(out: np.ndarray, R_ref: np.ndarray, w_ref: np.ndarray) -> np.ndarray:
+    """多張平均時，張與張之間不到 1 像素的殘餘位移會把細節抹軟。
+    取曝光最好那張的細部（log 亮度減去 1.5px 模糊），在它曝光良好的區域取代合成結果的細部，恢復原圖清晰度。"""
+    sig = max(1.0, out.shape[1] / 2700)
+    lo = np.log(np.maximum(luma(out), 1e-6))
+    lr = np.log(np.maximum(luma(R_ref), 1e-6))
+    d_out = lo - cv2.GaussianBlur(lo, (0, 0), sig)
+    d_ref = lr - cv2.GaussianBlur(lr, (0, 0), sig)
+    conf = cv2.GaussianBlur(np.clip(w_ref / 0.5, 0, 1).astype(np.float32), (0, 0), 2 * sig)
+    return out * np.exp(np.clip(d_ref - d_out, -0.5, 0.5) * conf)[..., None]
 
 
 def light_layer(R_state: np.ndarray, R_amb: np.ndarray, den_state: np.ndarray,
