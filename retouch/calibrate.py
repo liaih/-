@@ -129,7 +129,7 @@ def calibrate_style(pairs, style_path=PRESETS / "style_default.xmp", width: int 
     k1 = unpack(x)
     log(f"Lab 平均誤差 {l0:.2f} → {l1:.2f}（{len(data)} 張參考）")
     fitted = {n: round(k1[n], 4) for n in names}
-    keep = {n: K[n] for n in ("hdr_knee", "hdr_cap", "hdr_pull", "clip_max")}
+    keep = {n: K[n] for n in ("hdr_knee", "hdr_cap", "hdr_pull", "bright_dim", "bright_sat", "clip_max")}
     STYLE_K_FILE.write_text(json.dumps({"K": {**fitted, **keep}, "finished": [Path(f).name for _, f in pairs],
                                         "loss_before": round(l0, 3), "loss_after": round(l1, 3)},
                                        ensure_ascii=False, indent=1), encoding="utf-8")
