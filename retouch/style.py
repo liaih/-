@@ -21,6 +21,7 @@ K = dict(
     hdr_knee=1.0,      # 底層亮度超過「室內第 90 百分位 × 此倍數」才壓縮（窗外等 HDR 亮部）
     hdr_slope=0.3,     # 壓縮後 log 斜率（越小壓越多）
     hdr_cap=0.2,       # 底層超出 knee 後最多保留幾 EV
+    hdr_dehaze=0.0,    # 窗外去霧比例（扣除窗景霧白底），0＝不處理
     hdr_pull=0.0,      # 窗外（超出 knee 2 EV 以上）額外壓暗的 EV，讓窗景略暗於白牆、保有顏色
     clip_max=0.03,     # 自動曝光：室內過曝像素比例上限（LR 成品約 2.5%）
     white_b=0.0,       # 白牆、天花最終色調（Lab b*）；0＝不額外調整（依 2-4：亮部保留米白）
@@ -95,7 +96,7 @@ def _hue_weights(H: np.ndarray) -> np.ndarray:
 
 
 def hdr_compress(x: np.ndarray, knee: float, slope: float, radius_frac: float, cap: float = None,
-                 pull: float = 0.0) -> np.ndarray:
+                 pull: float = 0.0, dehaze: float = 0.0) -> np.ndarray:
     """HDR 亮部壓縮：只壓 log 亮度的大尺度底層、保留細節（窗外不再整片過曝）。"""
     Y = np.maximum(luma(x), 1e-6)
     lY = np.log2(Y)
@@ -114,6 +115,12 @@ def hdr_compress(x: np.ndarray, knee: float, slope: float, radius_frac: float, c
         m = _smoothstep(3.0, 4.5, lY - t).astype(np.float32)
         m = cv2.GaussianBlur(cv2.dilate(m, np.ones((2 * px + 1,) * 2, np.uint8)), (0, 0), px)
         gain = gain * np.exp2(-pull * m)
+        y = x * gain[..., None]
+        if dehaze > 0 and (m > 0.5).any():
+            # 窗外去霧：扣掉窗景的霧白底（窗內第 5 百分位亮度），恢復顏色與層次，避免壓暗後變灰
+            haze = float(np.percentile(luma(y)[m > 0.5], 5))
+            y = np.maximum(y - (dehaze * haze) * m[..., None], 0)
+        return y.astype(np.float32)
     return (x * gain[..., None]).astype(np.float32)
 
 
@@ -183,7 +190,7 @@ def apply_style(R: np.ndarray, p: dict, ev: float = 0.0, k: dict = K, clipped=No
         loc = np.where(loc < 0, loc * (1 - clipped), loc)
     x *= np.exp2(loc)[..., None]
     if hdr:
-        x = hdr_compress(x, k["hdr_knee"], k["hdr_slope"], k["base_radius"], k["hdr_cap"], k["hdr_pull"])
+        x = hdr_compress(x, k["hdr_knee"], k["hdr_slope"], k["base_radius"], k["hdr_cap"], k["hdr_pull"], k["hdr_dehaze"])
     g = linear_to_srgb(x)
     # 亮度曲線：白色、黑色、對比（以亮度比例套用，維持色相）
     Y = luma(g)
